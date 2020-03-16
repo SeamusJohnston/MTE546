@@ -10,10 +10,12 @@ A_m = 0.1; % Cross-sectional area of package
 m = 1; % Mass of package (assumes parachute is negligible)
 
 % Kalman Parameters
+n = 3;
+W0 = 0;
 Q = diag([0.01,0.01,0.01]);
 R = diag([0.1, 0.5]);
 x_kk = [500; 0; -9.81]; % m m/s m/s^2
-p_kk = diag([0.1,0.1,0.1]);
+p_kk = diag([0.01,0.01,0.01]);
 x_real = x_kk;
 
 % Logging variables
@@ -34,13 +36,24 @@ while counter <= 200
     z = [x_real(1); x_real(3)] + [sqrt(R(1,1))*randn(1); sqrt(R(2,2))*randn(1)]; % Add noise
         
     % Kalman Filter
-    x_kkm1 = nonLinearModel(x_kk, T, m, C_dp, A_p, C_dm, A_m);
-    F = linearizedModel(x_kkm1, T, m, C_dp, A_p, C_dm, A_m);
-    p_kkm1 = F*p_kk*F' + Q;
+    [X, W] = sigmaPoints(x_kk, p_kk, W0);
+    X_f = X;
+    for i=1:numel(X(1,:))
+        X_f(:,i) = nonLinearModel(X(:,i), T, m, C_dp, A_p, C_dm, A_m);
+    end
+    x_kkm1 = sum(W.*X_f,2);
+    p_kkm1 = W.*(X_f-x_kkm1)*(X_f-x_kkm1)' + Q;
     H = [1 0 0; 0 0 1];
-    K = p_kkm1*H'*(H*p_kkm1*H'+R)^-1;
-    x_kk = x_kkm1 + K*(z - H*x_kkm1);
-    p_kk = (eye(3) - K*H)*p_kkm1;
+    Z = zeros(2,numel(X(1,:)));
+    for i=1:numel(X(1,:))
+        Z(:,i) = H*X(:,i);
+    end
+    z_bar = sum(W.*Z,2);
+    S = W.*(Z-z_bar)*(Z-z_bar)' + R;
+    C_sz = W.*(X_f-x_kkm1)*(Z-z_bar)'; % Cross cov
+    K = C_sz*(S)^-1;
+    x_kk = x_kkm1 + K*(z - z_bar);
+    p_kk = p_kkm1 - K*S*K';
 
     % Log data
     x_est = [x_est x_kk];
@@ -69,5 +82,5 @@ xline(parachute_time,':', "Parachute open");
 legend("Estimated acceleration", "True acceleration", "Acceleration measurements");
 ylabel("Acceleration (m/s^2)");
 linkaxes([p1,p2,p3],'x');
-sgtitle("Extended Kalman Filter Parachute Simulation");
+sgtitle("Unscented Kalman Filter Parachute Simulation");
 xlabel('Time (s)');
