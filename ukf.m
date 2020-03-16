@@ -10,8 +10,10 @@ A_m = 0.1; % Cross-sectional area of package
 m = 1; % Mass of package (assumes parachute is negligible)
 
 % Kalman Parameters
-n = 3;
-W0 = 0;
+L = 3;
+alpha=1e-3;
+ki=0;
+beta=2;
 Q = diag([0.01,0.01,0.01]);
 R = diag([0.1, 0.5]);
 x_kk = [500; 0; -9.81]; % m m/s m/s^2
@@ -25,32 +27,33 @@ x_est = [x_kk];
 x_truth = [x_real];
 meas = [x_kk(1); x_kk(3)];
 parachute_time = 0; % Time in second at which the parachute opens
+
 while counter <= 200
     if counter == 50
         parachute_time = t(end)+T;
         A_p = 0.1; % Open parachute
     end
-    
+
     % Run Sim
     x_real = nonLinearModel(x_real, T, m, C_dp, A_p, C_dm, A_m);
     z = [x_real(1); x_real(3)] + [sqrt(R(1,1))*randn(1); sqrt(R(2,2))*randn(1)]; % Add noise
         
     % Kalman Filter
-    [X, W] = sigmaPoints(x_kk, p_kk, W0);
+    [X, Wm, Wc] = sigmaPoints(x_kk, p_kk, alpha, beta, ki);
     X_f = X;
     for i=1:numel(X(1,:))
         X_f(:,i) = nonLinearModel(X(:,i), T, m, C_dp, A_p, C_dm, A_m);
     end
-    x_kkm1 = sum(W.*X_f,2);
-    p_kkm1 = W.*(X_f-x_kkm1)*(X_f-x_kkm1)' + Q;
+    x_kkm1 = sum(Wm.*X_f,2);
+    p_kkm1 = Wc.*(X_f-x_kkm1)*(X_f-x_kkm1)' + Q;
     H = [1 0 0; 0 0 1];
     Z = zeros(2,numel(X(1,:)));
     for i=1:numel(X(1,:))
         Z(:,i) = H*X(:,i);
     end
-    z_bar = sum(W.*Z,2);
-    S = W.*(Z-z_bar)*(Z-z_bar)' + R;
-    C_sz = W.*(X_f-x_kkm1)*(Z-z_bar)'; % Cross cov
+    z_bar = sum(Wm.*Z,2);
+    S = Wc.*(Z-z_bar)*(Z-z_bar)' + R;
+    C_sz = Wc.*(X_f-x_kkm1)*(Z-z_bar)'; % Cross cov
     K = C_sz*(S)^-1;
     x_kk = x_kkm1 + K*(z - z_bar);
     p_kk = p_kkm1 - K*S*K';
