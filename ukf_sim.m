@@ -8,11 +8,6 @@ C_dm = 0.25; % Drag coeff of package
 A_m = 0.1016*0.0762; % Cross-sectional area of package (m^2)
 m = 0.265; % Mass of package (assumes parachute is negligible)
 
-% Read measurement file
-data = load('data/drop2_long_long.mat').data;
-data = data(25:end-50,:);
-load('data/height_gt.mat');
-
 % Kalman Parameters
 L = 3;
 alpha=1e-3;
@@ -20,66 +15,35 @@ ki=0;
 beta=2;
 Q = diag([0.0001,0.0001,0.1]);
 R = diag([0.3814, 0.1]);
-p_kk = diag([0.3814/2,0.01,0.01]);
+p_kk = diag([0.3814,0.01,0.01]);
 
 % Logging variables
-counter = 2;
+counter = 1;
 t = [0];
-meas = [data(1, 2); data(1,5)-9.81];
-acc_mag_log = [sqrt(data(1,3)^2+data(1,4)^2+data(1,5)^2)];
+meas = [100; -9.81];
 
 % State of system (which model to use)
 parachute_time = 0; % Time in second at which the parachute opens
-impact_time = 0;
-impact_threshold = 50;
-impact = false;
-parachute_deployed = false;
-free_fall_time = 0;
-free_fall = false;
-
-% Wait until free fall starts
-while ~free_fall && counter <= length(data(:,1))
-    % Check for freefall
-    [free_fall, acc_mag] = is_free_fall(data(counter, :), data(counter-1,:), free_fall);
-    
-    % Log data
-    z = [data(counter, 2); data(counter,5)-9.81];
-    counter = counter +1;
-    t = [t t(end)+T];
-    meas = [meas z];
-    acc_mag_log = [acc_mag_log acc_mag];
-end
-
-% Set free_fall_time, and initial ekf initial state and trigger parachute
 parachute_deployed = true;
-free_fall_time = t(end);
-t_est = [t(end)];
-x_kk = [mean(meas(1,:)); 0; -9.81]; % m m/s m/s^2
-x_est = [x_kk];
 
-% Start estimator now that free fall has begun
-while counter <= length(data(:,1))
-    % Read measurements
-    z = [data(counter, 2); data(counter,5)-9.81];
-    
-    % Check for parachute deployment
-    if A_p == 0 && parachute_deployed &&  z(2)>=0
+% Set free_fall_time, and initial ekf initial state and truth state
+free_fall_time = 0;
+t_est = [t(end)];
+x_kk = [100; 0; -9.81]; % m m/s m/s^2
+x_est = [x_kk];
+x = x_est;
+x_truth = x_kk;
+
+while counter <= 50
+    if counter == 10
         parachute_time = t(end)+T;
         A_p = pi*(0.381/2)^2; % Open parachute
     end
-   
-    % Check for impact
-    if ~impact
-        [impact,acc_mag] = is_impact(data(counter,:), impact_threshold);
-        if impact
-            impact_time = t(end)+T;
-            R = diag([0.3814, 1000]);
-        end
-    else
-        % Log acc_mag data
-        [~,acc_mag] = is_impact(data(counter,:), impact_threshold);
-    end
-
+    
+    % Read measurements and compute truth data
+    x_truth = nonLinearModel(x_truth, T, m, C_dp, A_p, C_dm, A_m, impact)+ [sqrt(Q(1,1)); sqrt(Q(2,2)); sqrt(Q(3,3))].*randn(3,1);
+    z = [x_truth(1); x_truth(3)]+ [sqrt(R(1,1)); sqrt(R(2,2))].*randn(2,1);
+    
     % Kalman Filter
     [X, Wm, Wc] = sigmaPoints(x_kk, p_kk, alpha, beta, ki);
     X_f = X;
@@ -103,44 +67,44 @@ while counter <= length(data(:,1))
 
     % Log data
     x_est = [x_est x_kk];
+    x= [x x_truth];
     t = [t t(end)+T];
     t_est = [t_est t_est(end)+T];
     meas = [meas z];
-    acc_mag_log = [acc_mag_log acc_mag];
     counter = counter+1;
 end
 
-% Plot data
-figure('Renderer', 'painters', 'Position', [10 10 300 400]);
+% Plot estimate
+figure('Renderer', 'painters', 'Position', [10 10 300 400])
 p1 = subplot(3,1,1);
-plot(t_est, x_est(1,:), height_gt(:,1)-0.3, height_gt(:,2),t, meas(1,:));
+plot(t_est, x_est(1,:), t, x(1,:), t, meas(1,:));
 xline(free_fall_time,':', "Free Fall");
 xline(parachute_time,':', "Parachute open");
-xline(impact_time,':', "Impact");
+%xline(impact_time,':', "Impact");
 legend("Estimated", "Truth", "Measured");
 ylabel("Height (m)");
 grid on;
 
 p2 = subplot(3,1,2);
-plot(t_est, x_est(2,:));
+plot(t_est, x_est(2,:), t, x(2,:));
 xline(free_fall_time,':', "Free Fall");
 xline(parachute_time,':', "Parachute open");
-xline(impact_time,':', "Impact");
-legend("Estimated");
+%xline(impact_time,':', "Impact");
+legend("Estimated", "Truth");
 ylabel("Velocity (m/s)");
 grid on;
 
 p3 = subplot(3,1,3);
-plot(t_est, x_est(3,:), t, meas(2,:), t, acc_mag_log);
+plot(t_est, x_est(3,:),t, x(3,:), t, meas(2,:));
 xline(free_fall_time,':', "Free Fall");
 xline(parachute_time,':', "Parachute open");
-xline(impact_time,':', "Impact");
-legend("Estimated", "Measured", "Magnitude");
+%xline(impact_time,':', "Impact");
+legend("Estimated", "Truth", "Measured");
 ylabel("Acceleration (m/s^2)");
 grid on;
-ylim([-50 150]);
+%ylim([-50 150]);
 linkaxes([p1,p2,p3],'x');
-sgtitle("Unscented Kalman Filter Drop Test");
+sgtitle("Unscented Kalman Filter Simulation");
 xlabel('Time (s)');
 set(gcf,'Color',[1 1 1])
-export_fig -r500 'drop2_ukf.png'
+export_fig -r500 'sim_ukf.png'
